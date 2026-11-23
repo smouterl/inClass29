@@ -92,20 +92,15 @@ void work_delay(int stage, int item, int burst) {
     while (nanosleep(&delay, &delay) == -1 && errno == EINTR) { }
 }
 
-int main(int argc, char *argv[]) {
+int main(void) {
     char shm_name[64];
     int shm_fd;
     SharedMemory *shm_addr;
     pid_t pid1, pid2;
-    int burst = 0;
+    // variability in incoming values
+    int burst = 2;
     int status1, status2;
 
-    if (argc > 2 || (argc == 2 && strcmp(argv[1], "burst") != 0)) {
-        fprintf(stderr, "Usage: %s [burst]\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-    if (argc == 2) burst = 1;
-    //setvbuf(stdout, NULL, _IONBF, 0);
 
     /* A unique name avoids interfering with another run of this program. */
     snprintf(shm_name, sizeof(shm_name), "/ica29_%ld", (long)getpid());
@@ -123,7 +118,7 @@ int main(int argc, char *argv[]) {
     shm_addr = mmap(NULL, sizeof(SharedMemory), PROT_READ | PROT_WRITE,
                     MAP_SHARED, shm_fd, 0);
     close(shm_fd);
-    shm_unlink(shm_name); // mapping remains available to both children
+    shm_unlink(shm_name); // memory mapping available for both children
     if (shm_addr == MAP_FAILED) {
         perror("mmap");
         return EXIT_FAILURE;
@@ -146,6 +141,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     if (pid1 == 0) {
+        // use pid for better random num
         srand((unsigned int)(time(NULL) ^ getpid()));
         for (int i = 0; i < NUM_ITEMS; i++) {
             double value = i + 1;
@@ -166,6 +162,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     if (pid2 == 0) {
+        // use pid for better random num
         srand((unsigned int)(time(NULL) ^ getpid()));
         for (int i = 0; i < NUM_ITEMS; i++) {
             double value = get(&shm_addr->buffer1);
@@ -187,6 +184,8 @@ int main(int argc, char *argv[]) {
         printf("Result: item %d -> %.4f\n", i + 1, value);
     }
 
+
+    // removes and destroys for memory 
     if (waitpid(pid1, &status1, 0) == -1 ||
         waitpid(pid2, &status2, 0) == -1) {
         perror("waitpid");
