@@ -1,13 +1,13 @@
 #include <math.h>
 
-void square (int* x){
+void square (double* x){
     *x = (*x * *x);
 }
 
-void add_ten (int* x){
-    *x = *x + 10;
+void add_ten (double* x){
+    *x = *x + 10.0;
 }
 
-void square_root (int* x){
-    *x = (int)sqrt((double)*x);
+void square_root (double* x){
+    *x = sqrt(*x);
 }
