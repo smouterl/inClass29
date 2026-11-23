@@ -22,7 +22,7 @@
 #include <string.h>
 
 #define BUFFER_SIZE 20
-#define NUM_ITEMS 30
+#define NUM_ITEMS 5
 
 typedef struct {
     double values[BUFFER_SIZE];

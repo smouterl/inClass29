@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -pthread
 LDLIBS = -pthread -lrt -lm
 
-ICA29: ICA29.c
+ICA29: temp.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 .PHONY: clean
