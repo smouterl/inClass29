@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <string.h>
+#include <math.h>
 
 #define SHM_NAME "/my_shm"
 #define SEM_NAME1 "/my_sem1"
@@ -165,3 +166,15 @@ int main() {
     return 0;	
 
 }
+
+    void add_ten (double* x){
+        *x = *x + 10.0;
+    }
+
+    void square (double* x){
+        *x = (*x * *x);
+    }
+
+    void square_root (double* x){
+        *x = sqrt(*x);
+    }
