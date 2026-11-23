@@ -148,4 +148,20 @@ int main() {
             sleep(1);
         }
     }
+    
+    // Clean up	
+    wait (NULL);	
+    munmap(shm_addr, SHM_SIZE) ;	
+    close(shm_fd) ;	
+    shm_unlink (SHM_NAME);	
+    sem_close (sem1);	
+    sem_close(sem2) ;	
+    sem_close (sem3);	
+    sem_close (sem4);	
+    sem_unlink (SEM_NAME1);	
+    sem_unlink (SEM_NAME2);	
+    sem_unlink (SEM_NAME3);	
+    sem_unlink (SEM_NAME4);	
+    return 0;	
+
 }
