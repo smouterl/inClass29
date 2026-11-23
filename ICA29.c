@@ -1,180 +1,252 @@
 /****************************************
  * Filename: multiproc3.c
- * Description: using fork with double buffering
- * Author: Bob Turney
- * Date: 3/24/2024
- * Note: gcc -o multiproc3 multiproc3.c
+ * Description: ICA29 #5 - three-process pipeline using
+ *              shared memory, multiple buffering, and
+ *              random/burst processing delays.
+ * Based on starter code by Bob Turney.
+ * Compile: gcc -Wall -Wextra -o multiproc3 multiproc3.c -lm -pthread
  ****************************************/
+
+#define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <semaphore.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
+#include <errno.h>
 
 #define SHM_NAME "/my_shm"
-#define SEM_NAME1 "/my_sem1"
-#define SEM_NAME2 "/my_sem2"
-#define SEM_NAME3 "/my_sem3"
-#define SEM_NAME4 "/my_sem4"
-#define SHM_SIZE 1024
+#define SEM_EMPTY1 "/my_empty1"
+#define SEM_FULL1  "/my_full1"
+#define SEM_MUTEX1 "/my_mutex1"
+#define SEM_EMPTY2 "/my_empty2"
+#define SEM_FULL2  "/my_full2"
+#define SEM_MUTEX2 "/my_mutex2"
 
-int main() {
-    int shm_fd;
-    int *shm_addr;
-    sem_t *sem1;
-    sem_t *sem2;
-    sem_t *sem3;
-    sem_t *sem4;
-    pid_t pid;
-    int x = 10;
+#define BUFFER_SIZE 20
+#define NUM_VALUES 6  // 0 through 5, as on the whiteboard
 
-    sem_unlink(SEM_NAME1);
-    sem_unlink(SEM_NAME2);
-    sem_unlink(SEM_NAME3);
-    sem_unlink(SEM_NAME4);
+typedef struct {
+    double buffer1[BUFFER_SIZE];
+    double buffer2[BUFFER_SIZE];
+    int head1;
+    int tail1;
+    int head2;
+    int tail2;
+} SharedMemory;
 
-    // Create shared memory
-    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
-    if (shm_fd == -1) {
-        perror("shm_open");
-        exit(1);
-    }
-
-    // Set the size of the shared memory
-    if (ftruncate(shm_fd, SHM_SIZE) == -1) {
-        perror("ftruncate");
-        exit(1);
-    }
-
-    // Map the shared memory
-    shm_addr = mmap(0, SHM_SIZE,
-                    PROT_READ | PROT_WRITE,
-                    MAP_SHARED,
-                    shm_fd, 0);
-
-    if (shm_addr == MAP_FAILED) {
-        perror("mmap");
-        exit(1);
-    }
-
-    // Create semaphore
-    sem1 = sem_open(SEM_NAME1, O_CREAT, 0666, 0);
-    sem2 = sem_open(SEM_NAME2, O_CREAT, 0666, 1);
-    sem3 = sem_open(SEM_NAME3, O_CREAT, 0666, 0);
-    sem4 = sem_open(SEM_NAME4, O_CREAT, 0666, 1);
-
-    if (sem1 == SEM_FAILED) {
-        perror("sem_open");
-        exit(1);
-    }
-
-    if (sem2 == SEM_FAILED) {
-        perror("sem_open");
-        exit(1);
-    }
-
-    if (sem3 == SEM_FAILED) {
-        perror("sem_open");
-        exit(1);
-    }
-
-    if (sem4 == SEM_FAILED) {
-        perror("sem_open");
-        exit(1);
-    }
-
-    int sval;
-    pid = fork();
-
-    if (pid < 0) {
-        perror("fork");
-        exit(1);
-    }
-
-    for (int i = 0; i < 10; i++) {
-        if (pid == 0) {
-            // Child process
-            printf("child i = %d\n", i);
-
-            if (i % 2 == 0) { // i % 2 == 0
-                sem_wait(sem2);
-                *shm_addr = x + i;
-                sem_post(sem1);
-                printf("wrote buffer 0\n");
-            } else {
-                //printf("I am at sem_wait(sem4)\n");
-                sem_getvalue(sem4, &sval);
-                //printf("sem4 value: %d\n", sval);
-
-                sem_wait(sem4);
-                *(shm_addr + 32*sizeof(int)) = x + i;
-                //sleep(1);
-                sem_post(sem3);
-                printf("wrote buffer 1\n");
-            }
-
-            sleep(1);
-
-            //exit(0);
-        } else {   // Parent process
-
-            printf("parent i = %d\n", i);
-
-            if (i > 0){
-                if (i % 2 == 0) { // i % 2 == 0 
-                    //printf("I am at sem_wait(sem3)\n");
-
-                    sem_wait(sem3);
-                    printf("Parent reads buffer 1: %d\n\n",
-                           *(shm_addr + 32*sizeof(int)));
-
-                    //sleep(1);
-                    sem_post(sem4);
-                } else {
-                    sem_wait(sem1);
-
-                    printf("Parent reads buffer 0: %d\n\n",
-                           *shm_addr);
-
-                    //sleep(1);
-                    sem_post(sem2);
-                }
-            }
-
-            sleep(1);
-        }
-    }
-    
-    // Clean up	
-    wait (NULL);	
-    munmap(shm_addr, SHM_SIZE) ;	
-    close(shm_fd) ;	
-    shm_unlink (SHM_NAME);	
-    sem_close (sem1);	
-    sem_close(sem2) ;	
-    sem_close (sem3);	
-    sem_close (sem4);	
-    sem_unlink (SEM_NAME1);	
-    sem_unlink (SEM_NAME2);	
-    sem_unlink (SEM_NAME3);	
-    sem_unlink (SEM_NAME4);	
-    return 0;	
-
+static void add_ten(double *x) {
+    *x = *x + 10.0;
 }
 
-    void add_ten (double* x){
-        *x = *x + 10.0;
+static void square(double *x) {
+    *x = *x * *x;
+}
+
+static void square_root(double *x) {
+    *x = sqrt(*x);
+}
+
+// Retry if a signal interrupts sem_wait().
+static void wait_sem(sem_t *sem) {
+    int result;
+    do {
+        result = sem_wait(sem);
+    } while (result == -1 && errno == EINTR);
+
+    if (result == -1) {
+        perror("sem_wait");
+        _exit(EXIT_FAILURE);
+    }
+}
+
+static void post_sem(sem_t *sem) {
+    if (sem_post(sem) == -1) {
+        perror("sem_post");
+        _exit(EXIT_FAILURE);
+    }
+}
+
+// Add one item to a circular buffer.
+static void write_buffer(double buffer[], int *tail, double value,
+                         sem_t *empty, sem_t *full, sem_t *mutex) {
+    wait_sem(empty);  // Wait until there is room.
+    wait_sem(mutex);  // Lock the buffer.
+
+    buffer[*tail] = value;
+    *tail = (*tail + 1) % BUFFER_SIZE;
+
+    post_sem(mutex);  // Unlock the buffer.
+    post_sem(full);   // Announce a new item.
+}
+
+// Remove one item from a circular buffer.
+static double read_buffer(double buffer[], int *head,
+                          sem_t *empty, sem_t *full, sem_t *mutex) {
+    wait_sem(full);   // Wait until an item is ready.
+    wait_sem(mutex);  // Lock the buffer.
+
+    double value = buffer[*head];
+    *head = (*head + 1) % BUFFER_SIZE;
+
+    post_sem(mutex);  // Unlock the buffer.
+    post_sem(empty);  // Announce a free slot.
+    return value;
+}
+
+// Most operations take about 1 second (+/-10%).
+// Occasionally a short or long burst changes the processing time.
+static void random_delay(void) {
+    int choice = rand() % 10;
+    long milliseconds;
+
+    if (choice == 0) {
+        milliseconds = 100 + rand() % 201;   // Fast burst: 0.1-0.3 s
+    } else if (choice == 1) {
+        milliseconds = 1600 + rand() % 601;  // Slow burst: 1.6-2.2 s
+    } else {
+        milliseconds = 900 + rand() % 201;   // Normal: 0.9-1.1 s
     }
 
-    void square (double* x){
-        *x = (*x * *x);
+    struct timespec delay = {
+        .tv_sec = milliseconds / 1000,
+        .tv_nsec = (milliseconds % 1000) * 1000000L
+    };
+
+    while (nanosleep(&delay, &delay) == -1 && errno == EINTR) {
+        // Keep sleeping for the remaining duration.
+    }
+}
+
+static sem_t *create_sem(const char *name, unsigned int initial_value) {
+    sem_t *sem = sem_open(name, O_CREAT | O_EXCL, 0600, initial_value);
+    if (sem == SEM_FAILED) {
+        perror(name);
+        exit(EXIT_FAILURE);
+    }
+    return sem;
+}
+
+int main(void) {
+    int shm_fd;
+    SharedMemory *shm_addr;
+
+    // Remove names left behind by a previous run.
+    shm_unlink(SHM_NAME);
+    sem_unlink(SEM_EMPTY1);
+    sem_unlink(SEM_FULL1);
+    sem_unlink(SEM_MUTEX1);
+    sem_unlink(SEM_EMPTY2);
+    sem_unlink(SEM_FULL2);
+    sem_unlink(SEM_MUTEX2);
+
+    // Create and map shared memory BEFORE forking.
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        return EXIT_FAILURE;
+    }
+    if (ftruncate(shm_fd, sizeof(SharedMemory)) == -1) {
+        perror("ftruncate");
+        return EXIT_FAILURE;
     }
 
-    void square_root (double* x){
-        *x = sqrt(*x);
+    shm_addr = mmap(NULL, sizeof(SharedMemory), PROT_READ | PROT_WRITE,
+                    MAP_SHARED, shm_fd, 0);
+    if (shm_addr == MAP_FAILED) {
+        perror("mmap");
+        return EXIT_FAILURE;
     }
+    memset(shm_addr, 0, sizeof(SharedMemory));
+
+    // Each buffer starts with 20 empty slots and 0 full slots.
+    sem_t *empty1 = create_sem(SEM_EMPTY1, BUFFER_SIZE);
+    sem_t *full1  = create_sem(SEM_FULL1, 0);
+    sem_t *mutex1 = create_sem(SEM_MUTEX1, 1);
+    sem_t *empty2 = create_sem(SEM_EMPTY2, BUFFER_SIZE);
+    sem_t *full2  = create_sem(SEM_FULL2, 0);
+    sem_t *mutex2 = create_sem(SEM_MUTEX2, 1);
+
+    // Child 1: Process 2 reads Buffer 1, adds 10, writes Buffer 2.
+    pid_t pid2 = fork();
+    if (pid2 == -1) {
+        perror("fork process 2");
+        return EXIT_FAILURE;
+    }
+    if (pid2 == 0) {
+        srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+        for (int i = 0; i < NUM_VALUES; i++) {
+            double x = read_buffer(shm_addr->buffer1, &shm_addr->head1,
+                                   empty1, full1, mutex1);
+            add_ten(&x);
+            random_delay();
+            write_buffer(shm_addr->buffer2, &shm_addr->tail2, x,
+                         empty2, full2, mutex2);
+        }
+        _exit(EXIT_SUCCESS);
+    }
+
+    // Child 2: Process 3 reads Buffer 2 and takes the square root.
+    pid_t pid3 = fork();
+    if (pid3 == -1) {
+        perror("fork process 3");
+        return EXIT_FAILURE;
+    }
+    if (pid3 == 0) {
+        srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+        for (int i = 0; i < NUM_VALUES; i++) {
+            double x = read_buffer(shm_addr->buffer2, &shm_addr->head2,
+                                   empty2, full2, mutex2);
+            square_root(&x);
+            random_delay();
+            // Truncate display to match the whiteboard examples.
+            // Calculations in the pipeline keep full double precision.
+            double shown = floor(x * 100.0) / 100.0;
+            printf("x = %d, Final = %.2f\n", i, shown);
+            fflush(stdout);
+        }
+        _exit(EXIT_SUCCESS);
+    }
+
+    // Parent: Process 1 squares inputs and writes Buffer 1.
+    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+    for (int i = 0; i < NUM_VALUES; i++) {
+        double x = i;
+        square(&x);
+        random_delay();
+        write_buffer(shm_addr->buffer1, &shm_addr->tail1, x,
+                     empty1, full1, mutex1);
+    }
+
+    // Parent waits until both children finish using the buffers.
+    waitpid(pid2, NULL, 0);
+    waitpid(pid3, NULL, 0);
+
+    // Only the parent removes shared resources.
+    munmap(shm_addr, sizeof(SharedMemory));
+    close(shm_fd);
+    shm_unlink(SHM_NAME);
+
+    sem_close(empty1);
+    sem_close(full1);
+    sem_close(mutex1);
+    sem_close(empty2);
+    sem_close(full2);
+    sem_close(mutex2);
+
+    sem_unlink(SEM_EMPTY1);
+    sem_unlink(SEM_FULL1);
+    sem_unlink(SEM_MUTEX1);
+    sem_unlink(SEM_EMPTY2);
+    sem_unlink(SEM_FULL2);
+    sem_unlink(SEM_MUTEX2);
+
+    return EXIT_SUCCESS;
+}
